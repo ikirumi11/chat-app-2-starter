@@ -1557,7 +1557,7 @@ button:disabled {
                     id="startButton"
                     onclick="startSync()"
                 >
-                    Copy & Update
+                    Copy & Verify
                 </button>
 
                 <button
@@ -1618,11 +1618,11 @@ button:disabled {
     <div class="finishBox">
 
         <div class="finishTitle">
-            Copy Complete
+            Copy Verified
         </div>
 
         <div class="finishText">
-            Every GitHub file has been copied to the local device.
+            Every GitHub file matches the local device copy.
             Starting the local site...
         </div>
 
@@ -2296,6 +2296,60 @@ function getFileIcon(path){
 
 
 /* =========================================================
+   SHA
+========================================================= */
+
+async function githubBlobSHA(buffer){
+
+    const bytes =
+        new Uint8Array(buffer);
+
+    const header =
+        new TextEncoder().encode(
+            `blob ${bytes.length}\0`
+        );
+
+    const combined =
+        new Uint8Array(
+            header.length +
+            bytes.length
+        );
+
+    combined.set(
+        header,
+        0
+    );
+
+    combined.set(
+        bytes,
+        header.length
+    );
+
+    const digest =
+        await crypto.subtle.digest(
+            "SHA-1",
+            combined
+        );
+
+    return Array
+        .from(
+            new Uint8Array(digest)
+        )
+        .map(
+            value =>
+                value
+                    .toString(16)
+                    .padStart(
+                        2,
+                        "0"
+                    )
+        )
+        .join("");
+
+}
+
+
+/* =========================================================
    RAW URL
 ========================================================= */
 
@@ -2804,7 +2858,7 @@ async function copyOne(
 
     if(
         existing &&
-        existing.githubSha ===
+        existing.sha ===
         githubFile.sha
     ){
 
@@ -2942,10 +2996,41 @@ async function copyOne(
         }
 
 
+        /*
+            Verify exact Git blob SHA before
+            anything gets saved.
+        */
+
+        const actualSHA =
+            await githubBlobSHA(
+                buffer
+            );
+
+
+        if(
+            actualSHA !==
+            githubFile.sha
+        ){
+
+            throw new Error(
+                "SHA-1 mismatch.\n" +
+                "GitHub: " +
+                githubFile.sha +
+                "\n" +
+                "Downloaded: " +
+                actualSHA
+            );
+
+        }
+
+
         const localFile = {
 
             path:
                 githubFile.path,
+
+            sha:
+                actualSHA,
 
             githubSha:
                 githubFile.sha,
@@ -3185,7 +3270,7 @@ async function checkAllQuick(){
 
         if(
             !local ||
-            local.githubSha !==
+            local.sha !==
             file.sha
         ){
 
@@ -3280,7 +3365,7 @@ async function finalVerificationAndStart(){
 
 
         if(
-            local.githubSha !==
+            local.sha !==
             githubFile.sha
         ){
 
@@ -3288,7 +3373,34 @@ async function finalVerificationAndStart(){
                 githubFile.path,
                 "error",
                 0,
-                "GitHub file version changed while copying."
+                "Stored SHA does not match GitHub."
+            );
+
+
+            mainStatus.textContent =
+                "Verification failed.";
+
+            return;
+
+        }
+
+
+        const actual =
+            await githubBlobSHA(
+                local.bytes
+            );
+
+
+        if(
+            actual !==
+            githubFile.sha
+        ){
+
+            setFileState(
+                githubFile.path,
+                "error",
+                0,
+                "Stored bytes failed SHA verification."
             );
 
 
@@ -4321,7 +4433,7 @@ async function startSync(){
         */
 
         mainStatus.textContent =
-            "Copying files from GitHub...";
+            "Copying and verifying files...";
 
 
         introStatus.textContent =
@@ -4460,11 +4572,11 @@ async function startSync(){
         */
 
         introStatus.textContent =
-            "Files copied. Preparing final file check...";
+            "Files copied. Preparing final verification...";
 
 
         deviceStatus.textContent =
-            "Waiting for final file check...";
+            "Waiting for final verification...";
 
 
         await waitForMinimumIntro();
